@@ -1,0 +1,15 @@
+[Unit]
+Description= SKDos - V0.1 System
+After=multi-user.target
+
+[Service]
+Environment=TERM=linux
+ExecStart=/bin/bash /opt/SKDos/SKDos.sh
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
