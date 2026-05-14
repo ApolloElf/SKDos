@@ -1,0 +1,12 @@
+# System / Linux
+*.log
+*.cache
+
+# Private Daten
+system/users.db
+
+# temporäre Dateien
+*.tmp
+
+# OS stuff
+.DS_Store
