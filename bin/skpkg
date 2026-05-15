@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -z "${SKDOS_ROOT:-}" ]; then
+  SKDOS_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+  export SKDOS_ROOT
+fi
+
+# shellcheck source=../lib/skdos-lib.sh
+. "$SKDOS_ROOT/lib/skdos-lib.sh"
+skdos_load_config
+skdos_ensure_layout
+
+usage() {
+  printf 'Usage: skpkg install <folder|archive> | list | remove <app>\n' >&2
+}
+
+validate_source() {
+  local source_dir="$1"
+  [ -f "$source_dir/manifest.conf" ] || { printf 'Missing manifest.conf\n' >&2; return 1; }
+  local id run
+  id="$(skdos_manifest_value "$source_dir/manifest.conf" id)"
+  run="$(skdos_manifest_value "$source_dir/manifest.conf" run)"
+  run="${run:-run.sh}"
+  case "$id" in
+    ''|*[^A-Za-z0-9._-]*)
+      printf 'Invalid app id in manifest: %s\n' "$id" >&2
+      return 1
+      ;;
+  esac
+  [ -f "$source_dir/$run" ] || { printf 'Missing runner: %s\n' "$run" >&2; return 1; }
+}
+
+install_source() {
+  local source="$1"
+  local work=""
+  local source_dir="$source"
+
+  if [ -f "$source" ]; then
+    work="$(mktemp -d)"
+    case "$source" in
+      *.tar|*.tar.gz|*.tgz)
+        tar -xf "$source" -C "$work"
+        ;;
+      *.zip)
+        command -v unzip >/dev/null 2>&1 || { printf 'unzip is required for .zip packages\n' >&2; exit 1; }
+        unzip -q "$source" -d "$work"
+        ;;
+      *)
+        printf 'Unsupported package archive: %s\n' "$source" >&2
+        exit 1
+        ;;
+    esac
+    if [ -f "$work/manifest.conf" ]; then
+      source_dir="$work"
+    else
+      source_dir="$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+    fi
+  fi
+
+  [ -d "$source_dir" ] || { printf 'Package source not found: %s\n' "$source" >&2; exit 1; }
+  validate_source "$source_dir"
+
+  id="$(skdos_manifest_value "$source_dir/manifest.conf" id)"
+  version="$(skdos_manifest_value "$source_dir/manifest.conf" version)"
+  dest="$SKDOS_APPS_DIR/$id"
+
+  if [ "$(realpath -m "$source_dir")" != "$(realpath -m "$dest")" ]; then
+    mkdir -p "$dest"
+    rm -rf "$dest.tmp"
+    mkdir -p "$dest.tmp"
+    cp -R "$source_dir"/. "$dest.tmp"/
+    rm -rf "$dest"
+    mv "$dest.tmp" "$dest"
+  fi
+
+  awk -F'\t' -v id="$id" '$1 != id' "$SKDOS_PACKAGE_REGISTRY" > "$SKDOS_PACKAGE_REGISTRY.tmp" || true
+  mv "$SKDOS_PACKAGE_REGISTRY.tmp" "$SKDOS_PACKAGE_REGISTRY"
+  printf '%s\t%s\t%s\t%s\n' "$id" "${version:-unknown}" "$dest" "$(date -Is)" >> "$SKDOS_PACKAGE_REGISTRY"
+
+  if [ -n "$work" ]; then
+    rm -rf "$work"
+  fi
+
+  printf 'Installed %s %s\n' "$id" "${version:-unknown}"
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  install)
+    [ $# -eq 1 ] || { usage; exit 2; }
+    install_source "$1"
+    ;;
+  list)
+    if [ ! -s "$SKDOS_PACKAGE_REGISTRY" ]; then
+      printf 'No SKDos apps installed.\n'
+    else
+      awk -F'\t' '{ printf "%-16s %-10s %s\n", $1, $2, $3 }' "$SKDOS_PACKAGE_REGISTRY"
+    fi
+    ;;
+  remove)
+    [ $# -eq 1 ] || { usage; exit 2; }
+    app_id="$1"
+    dest="$SKDOS_APPS_DIR/$app_id"
+    [ -d "$dest" ] || { printf 'App not installed: %s\n' "$app_id" >&2; exit 1; }
+    rm -rf "$dest"
+    awk -F'\t' -v id="$app_id" '$1 != id' "$SKDOS_PACKAGE_REGISTRY" > "$SKDOS_PACKAGE_REGISTRY.tmp" || true
+    mv "$SKDOS_PACKAGE_REGISTRY.tmp" "$SKDOS_PACKAGE_REGISTRY"
+    printf 'Removed %s\n' "$app_id"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

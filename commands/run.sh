@@ -1,9 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-APP="$1"
-
-if [ -f "$HOME/SKDos/apps/$APP.sh" ]; then
-    bash "$HOME/SKDos/apps/$APP.sh"
-else
-    echo "App not found"
-fi
+"${SKDOS_ROOT:-/opt/skdos}/bin/skapp" run "$@"

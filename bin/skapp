@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -z "${SKDOS_ROOT:-}" ]; then
+  SKDOS_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+  export SKDOS_ROOT
+fi
+
+# shellcheck source=../lib/skdos-lib.sh
+. "$SKDOS_ROOT/lib/skdos-lib.sh"
+skdos_load_config
+skdos_ensure_layout
+
+usage() {
+  printf 'Usage: skapp list|info <app>|run [--background] <app> [args...]\n' >&2
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  list)
+    for manifest in "$SKDOS_APPS_DIR"/*/manifest.conf; do
+      [ -e "$manifest" ] || continue
+      id="$(skdos_manifest_value "$manifest" id)"
+      name="$(skdos_manifest_value "$manifest" name)"
+      version="$(skdos_manifest_value "$manifest" version)"
+      printf '%-16s %-24s %s\n' "$id" "$name" "$version"
+    done
+    ;;
+  info)
+    [ $# -eq 1 ] || { usage; exit 2; }
+    manifest="$(skdos_app_manifest "$1")"
+    [ -n "$manifest" ] || { printf 'App not installed: %s\n' "$1" >&2; exit 1; }
+    sed -n '1,120p' "$manifest"
+    ;;
+  run)
+    background=false
+    if [ "${1:-}" = "--background" ]; then
+      background=true
+      shift
+    fi
+    [ $# -ge 1 ] || { usage; exit 2; }
+    app_id="$1"
+    shift
+    manifest="$(skdos_app_manifest "$app_id")"
+    [ -n "$manifest" ] || { printf 'App not installed: %s\n' "$app_id" >&2; exit 1; }
+    app_dir="$(dirname "$manifest")"
+    runner="$(skdos_manifest_value "$manifest" run)"
+    runner="${runner:-run.sh}"
+    [ -f "$app_dir/$runner" ] || { printf 'App runner missing: %s\n' "$runner" >&2; exit 1; }
+
+    export SKDOS_APP_ID="$app_id"
+    export SKDOS_APP_DIR="$app_dir"
+    export SKDOS_CWD="$(skdos_fs_normalize "${SKDOS_CWD:-C:\\HOME}")"
+
+    if [ "$background" = true ]; then
+      (cd "$app_dir" && bash "$runner" "$@") &
+      pid="$!"
+      skdos_task_register "$app_id" "$pid"
+      printf 'Started %s as task %s\n' "$app_id" "$pid"
+    else
+      (cd "$app_dir" && bash "$runner" "$@") &
+      pid="$!"
+      skdos_task_register "$app_id" "$pid"
+      status=0
+      wait "$pid" || status=$?
+      skdos_task_unregister "$pid"
+      exit "$status"
+    fi
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

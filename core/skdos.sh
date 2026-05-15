@@ -1,17 +1,8 @@
-#!/bin/bash
-export TERM=linux
-source ~/SKDos/core/command_loader.sh
-source ~/SKDos/config/settings.conf
+#!/usr/bin/env bash
+set -euo pipefail
 
-clear
-while true; do
-clear
-echo "====================="
-echo "    SKDos - V0.1     "
-echo "====================="
-echo "Type showcommands to "
-echo "show all commands.   " 
-echo "---------------------"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SKDOS_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+export SKDOS_ROOT
 
-read -r input
-run_command $input
+exec "$SKDOS_ROOT/bin/skdos-init" "$@"

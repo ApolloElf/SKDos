@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -z "${SKDOS_ROOT:-}" ]; then
+  SKDOS_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+  export SKDOS_ROOT
+fi
+
+# shellcheck source=../lib/skdos-lib.sh
+. "$SKDOS_ROOT/lib/skdos-lib.sh"
+
+skdos_load_config
+skdos_ensure_layout
+
+: "${SKDOS_USER:?SKDOS_USER is not set; start through sksession}"
+: "${SKDOS_HOME:?SKDOS_HOME is not set; start through sksession}"
+SKDOS_CWD="$(skdos_fs_normalize "${SKDOS_CWD:-C:\\HOME}")"
+export SKDOS_CWD
+
+skdos_print_banner() {
+  clear || true
+  printf '==============================\n'
+  printf '        SKDos v%s\n' "$SKDOS_VERSION"
+  printf '==============================\n'
+  printf 'User: %s   Path: %s\n' "$SKDOS_USER" "$SKDOS_CWD"
+  printf 'Type help for commands.\n\n'
+}
+
+skdos_help() {
+  cat <<'EOF'
+Core commands:
+  help                       Show this command list
+  cls                        Clear the screen
+  logout                     End the current SKDos session
+  exit                       Alias for logout
+  pwd                        Show the logical SKFilesystem path
+  cd <path>                  Change logical path
+  dir [path]                 List logical path contents
+  type <file>                Print a text file from SKFilesystem
+  explorer [path]            Open the text file explorer
+
+System commands:
+  skfs resolve <path>        Show Linux path behind a logical path
+  skapp list                 List installed SKDos apps
+  skapp run <app> [args...]  Run an installed app
+  skpkg install <source>     Install app folder/archive
+  skpkg list                 List installed app packages
+  sktask list                Show tracked SKDos app processes
+  sktask kill <task|pid>     Terminate a tracked app process
+
+External command scripts can live in C:\SYSTEM\commands.
+EOF
+}
+
+skdos_run_external_command() {
+  local cmd="$1"
+  shift || true
+
+  local command_path="$SKDOS_COMMANDS_DIR/$cmd"
+  local legacy_path="$SKDOS_COMMANDS_DIR/$cmd.sh"
+
+  if [ -x "$command_path" ]; then
+    "$command_path" "$@"
+    return $?
+  fi
+  if [ -f "$legacy_path" ]; then
+    bash "$legacy_path" "$@"
+    return $?
+  fi
+  return 127
+}
+
+skdos_print_banner
+
+while true; do
+  printf 'SKDos %s> ' "$SKDOS_CWD"
+  IFS= read -r line || exit 0
+  [ -n "$line" ] || continue
+
+  # shellcheck disable=SC2206
+  argv=($line)
+  cmd="${argv[0]}"
+  args=("${argv[@]:1}")
+
+  case "$cmd" in
+    help|showcommands)
+      skdos_help
+      ;;
+    cls|clear)
+      skdos_print_banner
+      ;;
+    logout|exit)
+      printf 'Logging out %s...\n' "$SKDOS_USER"
+      exit 0
+      ;;
+    pwd)
+      printf '%s\n' "$SKDOS_CWD"
+      ;;
+    cd)
+      target="${args[0]:-C:\\HOME}"
+      if resolved="$(skdos_fs_resolve "$target")" && [ -d "$resolved" ]; then
+        SKDOS_CWD="$(skdos_fs_normalize "$target")"
+        export SKDOS_CWD
+      else
+        printf 'Path not found: %s\n' "$target" >&2
+      fi
+      ;;
+    dir)
+      "$SKDOS_ROOT/bin/skfs" list "${args[0]:-$SKDOS_CWD}"
+      ;;
+    type)
+      if [ "${#args[@]}" -lt 1 ]; then
+        printf 'Usage: type <file>\n' >&2
+      else
+        "$SKDOS_ROOT/bin/skfs" type "${args[0]}"
+      fi
+      ;;
+    explorer)
+      "$SKDOS_ROOT/bin/skdesktop" "${args[0]:-$SKDOS_CWD}"
+      skdos_print_banner
+      ;;
+    skapp|skpkg|sktask|skfs|skuser)
+      "$SKDOS_ROOT/bin/$cmd" "${args[@]}"
+      ;;
+    run)
+      "$SKDOS_ROOT/bin/skapp" run "${args[@]}"
+      ;;
+    *)
+      if ! skdos_run_external_command "$cmd" "${args[@]}"; then
+        printf 'Unknown command: %s\n' "$cmd" >&2
+      fi
+      ;;
+  esac
+done

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -z "${SKDOS_ROOT:-}" ]; then
+  SKDOS_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+  export SKDOS_ROOT
+fi
+
+# shellcheck source=../lib/skdos-lib.sh
+. "$SKDOS_ROOT/lib/skdos-lib.sh"
+skdos_load_config
+skdos_ensure_layout
+
+current="$(skdos_fs_normalize "${1:-${SKDOS_CWD:-C:\\HOME}}")"
+
+while true; do
+  clear || true
+  printf '==============================\n'
+  printf '       SKFilesystem View\n'
+  printf '==============================\n'
+  printf 'Path: %s\n\n' "$current"
+  "$SKDOS_ROOT/bin/skfs" list "$current" || true
+  printf '\nCommands: cd <dir>, up, open <file>, run <app>, roots, quit\n'
+  printf 'SKDesktop> '
+  IFS= read -r line || exit 0
+  [ -n "$line" ] || continue
+  # shellcheck disable=SC2206
+  argv=($line)
+  cmd="${argv[0]}"
+  arg="${argv[1]:-}"
+
+  case "$cmd" in
+    cd)
+      next="$(skdos_fs_normalize "$current\\$arg")"
+      if [ -d "$(skdos_fs_resolve "$next")" ]; then
+        current="$next"
+      else
+        printf 'Path not found.\n'
+        sleep 1
+      fi
+      ;;
+    up)
+      current="$(skdos_fs_normalize "$current\\..")"
+      ;;
+    open)
+      "$SKDOS_ROOT/bin/skfs" type "$current\\$arg" || true
+      printf '\nPress Enter...'
+      IFS= read -r _
+      ;;
+    run)
+      "$SKDOS_ROOT/bin/skapp" run "$arg" || true
+      printf '\nPress Enter...'
+      IFS= read -r _
+      ;;
+    roots)
+      "$SKDOS_ROOT/bin/skfs" roots
+      printf '\nPress Enter...'
+      IFS= read -r _
+      ;;
+    quit|back|exit)
+      export SKDOS_CWD="$current"
+      exit 0
+      ;;
+  esac
+done

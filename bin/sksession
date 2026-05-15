@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -z "${SKDOS_ROOT:-}" ]; then
+  SKDOS_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+  export SKDOS_ROOT
+fi
+
+# shellcheck source=../lib/skdos-lib.sh
+. "$SKDOS_ROOT/lib/skdos-lib.sh"
+
+skdos_load_config
+skdos_ensure_layout
+
+while true; do
+  clear || true
+  printf '====================\n'
+  printf '      SKDos Login\n'
+  printf '====================\n\n'
+
+  if [ ! -s "$SKDOS_USERS_DB" ]; then
+    printf 'No SKDos users exist yet. Creating the first local user.\n'
+    "$SKDOS_ROOT/bin/skuser" add --first-user
+    printf '\n'
+  fi
+
+  printf 'User: '
+  IFS= read -r login_user
+  [ -n "$login_user" ] || continue
+
+  printf 'Pass: '
+  stty -echo 2>/dev/null || true
+  IFS= read -r login_pass
+  stty echo 2>/dev/null || true
+  printf '\n'
+
+  if skdos_authenticate "$login_user" "$login_pass"; then
+    session_id="$(date +%s)-$$"
+    user_home="$SKDOS_USERS_DIR/$login_user/home"
+    mkdir -p "$user_home"
+
+    export SKDOS_USER="$login_user"
+    export SKDOS_SESSION_ID="$session_id"
+    export SKDOS_HOME="$user_home"
+    export SKDOS_CWD='C:\HOME'
+
+    printf 'Login successful. Starting SKShell...\n'
+    sleep 1
+    "$SKDOS_ROOT/bin/skshell" || true
+
+    skdos_task_cleanup_user "$login_user"
+    unset SKDOS_USER SKDOS_SESSION_ID SKDOS_HOME SKDOS_CWD
+  else
+    printf 'Access denied.\n'
+    sleep 1
+  fi
+done

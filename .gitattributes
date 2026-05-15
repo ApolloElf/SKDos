@@ -1,0 +1,5 @@
+*.sh text eol=lf
+bin/* text eol=lf
+lib/*.sh text eol=lf
+systemd/*.service text eol=lf
+*.conf text eol=lf

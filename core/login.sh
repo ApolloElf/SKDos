@@ -1,17 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-clear
-echo "-----------"
-echo "SKDos Login"
-echo "-----------"
-
-read -p "User: " u
-read -p "Pass: " p
-
-if grep -q "$u:$p" ~/SKDos/system/users.db; then
-    echo "Login succesful"
-    sleep 1
-else
-    echo "Access denied"
-    exit
+if [ -z "${SKDOS_ROOT:-}" ]; then
+  SKDOS_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+  export SKDOS_ROOT
 fi
+
+exec "$SKDOS_ROOT/bin/sksession" "$@"

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -z "${SKDOS_ROOT:-}" ]; then
+  SKDOS_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+  export SKDOS_ROOT
+fi
+
+# shellcheck source=../lib/skdos-lib.sh
+. "$SKDOS_ROOT/lib/skdos-lib.sh"
+skdos_load_config
+skdos_ensure_layout
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  add)
+    first_user=false
+    if [ "${1:-}" = "--first-user" ]; then
+      first_user=true
+      shift
+    fi
+    if [ $# -ge 1 ]; then
+      user="$1"
+    else
+      printf 'New user: '
+      IFS= read -r user
+    fi
+    printf 'New password: '
+    stty -echo 2>/dev/null || true
+    IFS= read -r pass1
+    stty echo 2>/dev/null || true
+    printf '\nConfirm password: '
+    stty -echo 2>/dev/null || true
+    IFS= read -r pass2
+    stty echo 2>/dev/null || true
+    printf '\n'
+    [ "$pass1" = "$pass2" ] || { printf 'Passwords do not match.\n' >&2; exit 1; }
+    skdos_create_user "$user" "$pass1"
+    if [ "$first_user" = true ]; then
+      printf 'First SKDos user created: %s\n' "$user"
+    else
+      printf 'User created: %s\n' "$user"
+    fi
+    ;;
+  *)
+    printf 'Usage: skuser add [username]\n' >&2
+    exit 2
+    ;;
+esac
