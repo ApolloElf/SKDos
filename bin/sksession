@@ -37,6 +37,7 @@ while true; do
   if skdos_authenticate "$login_user" "$login_pass"; then
     session_id="$(date +%s)-$$"
     user_home="$SKDOS_USERS_DIR/$login_user/home"
+    session_file="$SKDOS_STATE_DIR/run/session-$login_user"
     mkdir -p "$user_home"
 
     export SKDOS_USER="$login_user"
@@ -44,12 +45,36 @@ while true; do
     export SKDOS_HOME="$user_home"
     export SKDOS_CWD='C:\HOME'
 
-    printf 'Login successful. Starting SKShell...\n'
-    sleep 1
-    "$SKDOS_ROOT/bin/skshell" || true
+    if [ -f "$session_file" ]; then
+      old_pid="$(sed -n '1p' "$session_file" 2>/dev/null || true)"
+      if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        printf 'A SKDos session is already active for %s.\n' "$login_user"
+        sleep 1
+        unset SKDOS_USER SKDOS_SESSION_ID SKDOS_HOME SKDOS_CWD
+        continue
+      fi
+    fi
+    printf '%s\n%s\n' "$$" "$session_id" > "$session_file"
 
-    skdos_task_cleanup_user "$login_user"
-    unset SKDOS_USER SKDOS_SESSION_ID SKDOS_HOME SKDOS_CWD
+    cleanup_session() {
+      skdos_task_cleanup_user "$login_user"
+      rm -f "$session_file"
+      unset SKDOS_USER SKDOS_SESSION_ID SKDOS_HOME SKDOS_CWD
+      trap - EXIT INT TERM
+    }
+    trap cleanup_session EXIT INT TERM
+
+    shell_bin="${SKDOS_DEFAULT_SHELL:-skshell}"
+    case "$shell_bin" in
+      skshell|skdesktop) ;;
+      *) shell_bin="skshell" ;;
+    esac
+
+    printf 'Login successful. Starting %s...\n' "$shell_bin"
+    sleep 1
+    "$SKDOS_ROOT/bin/$shell_bin" || true
+
+    cleanup_session
   else
     printf 'Access denied.\n'
     sleep 1

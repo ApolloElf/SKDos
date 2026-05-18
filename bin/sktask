@@ -20,18 +20,26 @@ case "$cmd" in
     printf '%-8s %-16s %-16s %s\n' PID APP USER STARTED
     for file in "$SKDOS_TASK_DIR"/*.task; do
       [ -e "$file" ] || continue
-      pid="$(awk -F= '$1 == "pid" { print $2; exit }' "$file")"
-      app="$(awk -F= '$1 == "app" { print $2; exit }' "$file")"
-      user="$(awk -F= '$1 == "user" { print $2; exit }' "$file")"
-      started="$(awk -F= '$1 == "started" { print $2; exit }' "$file")"
+      pid="$(skdos_task_field "$file" pid)"
+      app="$(skdos_task_field "$file" app)"
+      user="$(skdos_task_field "$file" user)"
+      started="$(skdos_task_field "$file" started)"
       printf '%-8s %-16s %-16s %s\n' "$pid" "$app" "$user" "$started"
     done
     ;;
   kill)
     [ $# -eq 1 ] || { printf 'Usage: sktask kill <pid>\n' >&2; exit 2; }
     pid="$1"
+    case "$pid" in ''|*[!0-9]*) printf 'Invalid task pid: %s\n' "$pid" >&2; exit 1 ;; esac
     [ -f "$SKDOS_TASK_DIR/$pid.task" ] || { printf 'No tracked SKDos task: %s\n' "$pid" >&2; exit 1; }
-    kill "$pid"
+    task_user="$(skdos_task_field "$SKDOS_TASK_DIR/$pid.task" user)"
+    if [ "${SKDOS_USER:-system}" != "system" ] && [ "$task_user" != "${SKDOS_USER:-}" ]; then
+      printf 'Task %s belongs to another SKDos user.\n' "$pid" >&2
+      exit 1
+    fi
+    if skdos_task_process_matches "$SKDOS_TASK_DIR/$pid.task"; then
+      kill -- "$pid"
+    fi
     rm -f "$SKDOS_TASK_DIR/$pid.task"
     printf 'Terminated task %s\n' "$pid"
     ;;

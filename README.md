@@ -1,4 +1,4 @@
-# SKDos v1.0
+# SKDos v1.1
 
 SKDos is a minimal, modular, Surface-focused operating-system userland intended to run on top of a Linux system using the `linux-surface` kernel. Linux remains the hardware abstraction layer; SKDos owns the visible runtime, login flow, shell, app model, package install path, logical filesystem view, and process registry.
 
@@ -94,4 +94,4 @@ type=script
 run=run.sh
 ```
 
-Install local folders or archives with `skpkg install <source>`. Installed apps live under `/opt/skdos/apps/<id>` and are executed by `skapp run <id>` as real child processes registered in the SKDos task table.
+Install local folders or archives with `skpkg install <source>`. Installed apps live under `/opt/skdos/apps/<id>` and are executed by `skapp run <id>` as real child processes registered in the SKDos task table. Package installs validate the manifest and stage a complete replacement before swapping it into the app root.

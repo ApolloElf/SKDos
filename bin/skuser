@@ -27,6 +27,7 @@ case "$cmd" in
       printf 'New user: '
       IFS= read -r user
     fi
+    skdos_valid_id "$user" || { printf 'Invalid SKDos user name: %s\n' "$user" >&2; exit 1; }
     printf 'New password: '
     stty -echo 2>/dev/null || true
     IFS= read -r pass1

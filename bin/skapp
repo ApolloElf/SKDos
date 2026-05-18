@@ -46,9 +46,9 @@ case "$cmd" in
     manifest="$(skdos_app_manifest "$app_id")"
     [ -n "$manifest" ] || { printf 'App not installed: %s\n' "$app_id" >&2; exit 1; }
     app_dir="$(dirname "$manifest")"
+    skdos_validate_manifest_dir "$app_dir"
     runner="$(skdos_manifest_value "$manifest" run)"
     runner="${runner:-run.sh}"
-    [ -f "$app_dir/$runner" ] || { printf 'App runner missing: %s\n' "$runner" >&2; exit 1; }
 
     export SKDOS_APP_ID="$app_id"
     export SKDOS_APP_DIR="$app_dir"
@@ -63,9 +63,11 @@ case "$cmd" in
       (cd "$app_dir" && bash "$runner" "$@") &
       pid="$!"
       skdos_task_register "$app_id" "$pid"
+      trap 'skdos_task_unregister "$pid"' EXIT INT TERM
       status=0
       wait "$pid" || status=$?
       skdos_task_unregister "$pid"
+      trap - EXIT INT TERM
       exit "$status"
     fi
     ;;

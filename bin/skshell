@@ -37,6 +37,8 @@ Core commands:
   cd <path>                  Change logical path
   dir [path]                 List logical path contents
   type <file>                Print a text file from SKFilesystem
+  alias [name=value]         Show or set a command alias
+  unalias <name>             Remove a command alias
   explorer [path]            Open the text file explorer
 
 System commands:
@@ -56,6 +58,8 @@ skdos_run_external_command() {
   local cmd="$1"
   shift || true
 
+  skdos_valid_id "$cmd" || return 127
+
   local command_path="$SKDOS_COMMANDS_DIR/$cmd"
   local legacy_path="$SKDOS_COMMANDS_DIR/$cmd.sh"
 
@@ -70,6 +74,8 @@ skdos_run_external_command() {
   return 127
 }
 
+declare -A SKDOS_ALIASES=()
+
 skdos_print_banner
 
 while true; do
@@ -77,10 +83,21 @@ while true; do
   IFS= read -r line || exit 0
   [ -n "$line" ] || continue
 
-  # shellcheck disable=SC2206
-  argv=($line)
+  argv=()
+  if ! skdos_parse_command "$line" argv; then
+    continue
+  fi
+  [ "${#argv[@]}" -gt 0 ] || continue
   cmd="${argv[0]}"
   args=("${argv[@]:1}")
+  if [ -n "${SKDOS_ALIASES[$cmd]+set}" ]; then
+    alias_argv=()
+    if skdos_parse_command "${SKDOS_ALIASES[$cmd]}" alias_argv; then
+      argv=("${alias_argv[@]}" "${args[@]}")
+      cmd="${argv[0]}"
+      args=("${argv[@]:1}")
+    fi
+  fi
 
   case "$cmd" in
     help|showcommands)
@@ -95,6 +112,41 @@ while true; do
       ;;
     pwd)
       printf '%s\n' "$SKDOS_CWD"
+      ;;
+    alias)
+      if [ "${#args[@]}" -eq 0 ]; then
+        for alias_name in "${!SKDOS_ALIASES[@]}"; do
+          printf '%s=%q\n' "$alias_name" "${SKDOS_ALIASES[$alias_name]}"
+        done | sort
+      else
+        for alias_def in "${args[@]}"; do
+          case "$alias_def" in
+            *=*)
+              alias_name="${alias_def%%=*}"
+              alias_value="${alias_def#*=}"
+              skdos_valid_id "$alias_name" || { printf 'Invalid alias name: %s\n' "$alias_name" >&2; continue; }
+              [ -n "$alias_value" ] || { printf 'Alias value cannot be empty: %s\n' "$alias_name" >&2; continue; }
+              SKDOS_ALIASES["$alias_name"]="$alias_value"
+              ;;
+            *)
+              if [ -n "${SKDOS_ALIASES[$alias_def]+set}" ]; then
+                printf '%s=%q\n' "$alias_def" "${SKDOS_ALIASES[$alias_def]}"
+              else
+                printf 'Alias not found: %s\n' "$alias_def" >&2
+              fi
+              ;;
+          esac
+        done
+      fi
+      ;;
+    unalias)
+      if [ "${#args[@]}" -ne 1 ]; then
+        printf 'Usage: unalias <name>\n' >&2
+      elif ! skdos_valid_id "${args[0]}"; then
+        printf 'Invalid alias name: %s\n' "${args[0]}" >&2
+      else
+        unset "SKDOS_ALIASES[${args[0]}]"
+      fi
       ;;
     cd)
       target="${args[0]:-C:\\HOME}"

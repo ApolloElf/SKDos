@@ -5,6 +5,9 @@ if [ -z "${SKDOS_ROOT:-}" ]; then
   export SKDOS_ROOT
 fi
 
+# shellcheck source=../lib/skdos-lib.sh
+. "$SKDOS_ROOT/lib/skdos-lib.sh"
+
 run_command() {
   local cmd="$1"
   shift || true
@@ -17,6 +20,7 @@ run_command() {
       "$SKDOS_ROOT/bin/skapp" run "$@"
       ;;
     *)
+      skdos_valid_id "$cmd" || { printf 'Unknown command: %s\n' "$cmd" >&2; return 127; }
       if [ -f "$SKDOS_ROOT/commands/$cmd.sh" ]; then
         bash "$SKDOS_ROOT/commands/$cmd.sh" "$@"
       else

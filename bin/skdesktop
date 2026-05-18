@@ -24,8 +24,12 @@ while true; do
   printf 'SKDesktop> '
   IFS= read -r line || exit 0
   [ -n "$line" ] || continue
-  # shellcheck disable=SC2206
-  argv=($line)
+  argv=()
+  if ! skdos_parse_command "$line" argv; then
+    sleep 1
+    continue
+  fi
+  [ "${#argv[@]}" -gt 0 ] || continue
   cmd="${argv[0]}"
   arg="${argv[1]:-}"
 

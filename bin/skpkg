@@ -17,27 +17,18 @@ usage() {
 
 validate_source() {
   local source_dir="$1"
-  [ -f "$source_dir/manifest.conf" ] || { printf 'Missing manifest.conf\n' >&2; return 1; }
-  local id run
-  id="$(skdos_manifest_value "$source_dir/manifest.conf" id)"
-  run="$(skdos_manifest_value "$source_dir/manifest.conf" run)"
-  run="${run:-run.sh}"
-  case "$id" in
-    ''|*[^A-Za-z0-9._-]*)
-      printf 'Invalid app id in manifest: %s\n' "$id" >&2
-      return 1
-      ;;
-  esac
-  [ -f "$source_dir/$run" ] || { printf 'Missing runner: %s\n' "$run" >&2; return 1; }
+  skdos_validate_manifest_dir "$source_dir"
 }
 
 install_source() {
   local source="$1"
   local work=""
   local source_dir="$source"
+  local id version dest dest_real tmp="" backup=""
 
   if [ -f "$source" ]; then
     work="$(mktemp -d)"
+    trap '[ -z "${tmp:-}" ] || rm -rf "$tmp"; [ -z "${work:-}" ] || rm -rf "$work"' EXIT
     case "$source" in
       *.tar|*.tar.gz|*.tgz)
         tar -xf "$source" -C "$work"
@@ -54,7 +45,7 @@ install_source() {
     if [ -f "$work/manifest.conf" ]; then
       source_dir="$work"
     else
-      source_dir="$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+      source_dir="$(find "$work" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1)"
     fi
   fi
 
@@ -64,14 +55,31 @@ install_source() {
   id="$(skdos_manifest_value "$source_dir/manifest.conf" id)"
   version="$(skdos_manifest_value "$source_dir/manifest.conf" version)"
   dest="$SKDOS_APPS_DIR/$id"
+  dest_real="$(realpath -m "$dest")"
 
-  if [ "$(realpath -m "$source_dir")" != "$(realpath -m "$dest")" ]; then
-    mkdir -p "$dest"
-    rm -rf "$dest.tmp"
-    mkdir -p "$dest.tmp"
-    cp -R "$source_dir"/. "$dest.tmp"/
-    rm -rf "$dest"
-    mv "$dest.tmp" "$dest"
+  case "$dest_real" in
+    "$(realpath -m "$SKDOS_APPS_DIR")"/*) ;;
+    *) printf 'Refusing install outside SKDos app root: %s\n' "$dest" >&2; exit 1 ;;
+  esac
+
+  if [ "$(realpath -m "$source_dir")" != "$dest_real" ]; then
+    tmp="$(mktemp -d "$SKDOS_APPS_DIR/.${id}.install.XXXXXX")"
+    trap '[ -z "${tmp:-}" ] || rm -rf "$tmp"; [ -z "${work:-}" ] || rm -rf "$work"' EXIT
+    backup="$SKDOS_APPS_DIR/.${id}.previous.$$"
+    cp -R "$source_dir"/. "$tmp"/
+    skdos_validate_manifest_dir "$tmp"
+    if [ -e "$dest" ]; then
+      mv "$dest" "$backup"
+    fi
+    if mv "$tmp" "$dest"; then
+      tmp=""
+      rm -rf "$backup"
+    else
+      [ ! -e "$backup" ] || mv "$backup" "$dest"
+      rm -rf "$tmp"
+      printf 'Install failed; previous app was preserved: %s\n' "$id" >&2
+      exit 1
+    fi
   fi
 
   awk -F'\t' -v id="$id" '$1 != id' "$SKDOS_PACKAGE_REGISTRY" > "$SKDOS_PACKAGE_REGISTRY.tmp" || true
@@ -81,6 +89,7 @@ install_source() {
   if [ -n "$work" ]; then
     rm -rf "$work"
   fi
+  trap - EXIT
 
   printf 'Installed %s %s\n' "$id" "${version:-unknown}"
 }
@@ -103,6 +112,7 @@ case "$cmd" in
   remove)
     [ $# -eq 1 ] || { usage; exit 2; }
     app_id="$1"
+    skdos_valid_id "$app_id" || { printf 'Invalid app id: %s\n' "$app_id" >&2; exit 1; }
     dest="$SKDOS_APPS_DIR/$app_id"
     [ -d "$dest" ] || { printf 'App not installed: %s\n' "$app_id" >&2; exit 1; }
     rm -rf "$dest"

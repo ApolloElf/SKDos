@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-SKDOS_VERSION="${SKDOS_VERSION:-1.0}"
+SKDOS_VERSION="${SKDOS_VERSION:-1.1}"
 SKDOS_ROOT="${SKDOS_ROOT:-/opt/skdos}"
 SKDOS_CONFIG_DIR="${SKDOS_CONFIG_DIR:-/etc/skdos}"
 SKDOS_STATE_DIR="${SKDOS_STATE_DIR:-/var/lib/skdos}"
@@ -13,6 +13,11 @@ SKDOS_APPS_DIR="${SKDOS_APPS_DIR:-$SKDOS_ROOT/apps}"
 SKDOS_COMMANDS_DIR="${SKDOS_COMMANDS_DIR:-$SKDOS_ROOT/commands}"
 SKDOS_TASK_DIR="$SKDOS_STATE_DIR/run/tasks"
 SKDOS_PACKAGE_REGISTRY="$SKDOS_STATE_DIR/system/packages.tsv"
+
+skdos_die() {
+  printf '%s\n' "$*" >&2
+  return 1
+}
 
 skdos_load_config() {
   if [ -f "$SKDOS_SYSTEM_CONFIG" ]; then
@@ -29,6 +34,13 @@ skdos_ensure_layout() {
   mkdir -p "$SKDOS_CONFIG_DIR" "$SKDOS_STATE_DIR/system" "$SKDOS_USERS_DIR" \
     "$SKDOS_TASK_DIR" "$SKDOS_APPS_DIR" "$SKDOS_COMMANDS_DIR"
   touch "$SKDOS_PACKAGE_REGISTRY"
+}
+
+skdos_valid_id() {
+  case "${1:-}" in
+    ''|*[^A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 skdos_hash_password() {
@@ -79,7 +91,13 @@ skdos_create_user() {
 
 skdos_fs_root_for_drive() {
   case "$1" in
-    HOME) printf '%s\n' "$SKDOS_HOME" ;;
+    HOME)
+      [ -n "${SKDOS_HOME:-}" ] || {
+        printf 'SKFilesystem root C:\\HOME is unavailable outside a user session.\n' >&2
+        return 1
+      }
+      printf '%s\n' "$SKDOS_HOME"
+      ;;
     APPS) printf '%s\n' "$SKDOS_APPS_DIR" ;;
     SYSTEM) printf '%s\n' "$SKDOS_ROOT" ;;
     *) return 1 ;;
@@ -113,13 +131,14 @@ skdos_fs_normalize() {
 
   local -a out=()
   local part
+  local -a parts=()
   IFS='\' read -r -a parts <<< "$rest"
   for part in "${parts[@]}"; do
     case "$part" in
       ''|.) ;;
       ..)
         if [ "${#out[@]}" -gt 0 ]; then
-          unset "out[$((${#out[@]} - 1))]"
+          out=("${out[@]:0:$((${#out[@]} - 1))}")
         fi
         ;;
       *)
@@ -169,22 +188,161 @@ skdos_fs_resolve() {
 skdos_manifest_value() {
   local manifest="$1"
   local key="$2"
-  awk -F= -v key="$key" '$1 == key { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$manifest"
+  awk -F= -v key="$key" '
+    /^[[:space:]]*($|#)/ { next }
+    {
+      k = $1
+      sub(/^[ \t]+/, "", k)
+      sub(/[ \t]+$/, "", k)
+      if (k == key) {
+        value = $0
+        sub(/^[^=]*=/, "", value)
+        sub(/^[ \t]+/, "", value)
+        sub(/[ \t]+$/, "", value)
+        print value
+        exit
+      }
+    }
+  ' "$manifest"
 }
 
 skdos_app_manifest() {
   local app="$1"
+  skdos_valid_id "$app" || return 1
   local candidate="$SKDOS_APPS_DIR/$app/manifest.conf"
   [ -f "$candidate" ] && printf '%s\n' "$candidate"
+}
+
+skdos_validate_manifest_dir() {
+  local app_dir="$1"
+  local manifest="$app_dir/manifest.conf"
+  local id type runner
+
+  [ -d "$app_dir" ] || { printf 'App directory not found: %s\n' "$app_dir" >&2; return 1; }
+  [ -f "$manifest" ] || { printf 'Missing manifest.conf\n' >&2; return 1; }
+
+  id="$(skdos_manifest_value "$manifest" id)"
+  type="$(skdos_manifest_value "$manifest" type)"
+  runner="$(skdos_manifest_value "$manifest" run)"
+  runner="${runner:-run.sh}"
+  type="${type:-script}"
+
+  skdos_valid_id "$id" || { printf 'Invalid app id in manifest: %s\n' "$id" >&2; return 1; }
+  case "$type" in
+    script) ;;
+    *) printf 'Unsupported app type: %s\n' "$type" >&2; return 1 ;;
+  esac
+  case "$runner" in
+    ''|/*|*'..'*|*\\*) printf 'Invalid app runner: %s\n' "$runner" >&2; return 1 ;;
+  esac
+  [ -f "$app_dir/$runner" ] || { printf 'Missing runner: %s\n' "$runner" >&2; return 1; }
+}
+
+skdos_parse_command() {
+  local line="$1"
+  local out_name="$2"
+  local -a parsed=()
+  local token="" quote="" char
+  local token_started=false
+  local i=0 len=${#line}
+
+  while [ "$i" -lt "$len" ]; do
+    char="${line:i:1}"
+    if [ -n "$quote" ]; then
+      if [ "$quote" = "'" ]; then
+        if [ "$char" = "'" ]; then
+          quote=""
+        else
+          token+="$char"
+          token_started=true
+        fi
+      elif [ "$char" = '"' ]; then
+        quote=""
+      elif [ "$char" = "\\" ]; then
+        token+="\\"
+        token_started=true
+      else
+        token+="$char"
+        token_started=true
+      fi
+    elif [[ "$char" =~ [[:space:]] ]]; then
+      if [ "$token_started" = true ]; then
+        parsed+=("$token")
+        token=""
+        token_started=false
+      fi
+    elif [ "$char" = "'" ]; then
+      quote="'"
+      token_started=true
+    elif [ "$char" = '"' ]; then
+      quote='"'
+      token_started=true
+    elif [ "$char" = "\\" ]; then
+      token+="\\"
+      token_started=true
+    else
+      token+="$char"
+      token_started=true
+    fi
+    i=$((i + 1))
+  done
+
+  [ -z "$quote" ] || { printf 'Unclosed quote in command line.\n' >&2; return 2; }
+  [ "$token_started" = false ] || parsed+=("$token")
+  eval "$out_name=(\"\${parsed[@]}\")"
+}
+
+skdos_task_field() {
+  local file="$1"
+  local key="$2"
+  awk -F= -v key="$key" '$1 == key { $1 = ""; sub(/^=/, "", $0); print $0; exit }' "$file"
+}
+
+skdos_pid_alive() {
+  local pid="$1"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null
+}
+
+skdos_proc_start_time() {
+  local pid="$1"
+  [ -r "/proc/$pid/stat" ] || return 1
+  awk '{ print $22 }' "/proc/$pid/stat" 2>/dev/null
+}
+
+skdos_task_process_matches() {
+  local file="$1"
+  local pid proc_start current_start
+  pid="$(skdos_task_field "$file" pid)"
+  skdos_pid_alive "$pid" || return 1
+  proc_start="$(skdos_task_field "$file" proc_start)"
+  [ -n "$proc_start" ] || return 0
+  current_start="$(skdos_proc_start_time "$pid" || true)"
+  [ -z "$current_start" ] || [ "$current_start" = "$proc_start" ]
 }
 
 skdos_task_register() {
   local app_id="$1"
   local pid="$2"
   local user="${SKDOS_USER:-system}"
+  local session="${SKDOS_SESSION_ID:-system}"
+  local app_dir="${SKDOS_APP_DIR:-}"
+  local proc_start=""
   local task_file="$SKDOS_TASK_DIR/$pid.task"
   mkdir -p "$SKDOS_TASK_DIR"
-  printf 'pid=%s\napp=%s\nuser=%s\nstarted=%s\n' "$pid" "$app_id" "$user" "$(date -Is)" > "$task_file"
+  skdos_valid_id "$app_id" || { printf 'Invalid app id: %s\n' "$app_id" >&2; return 1; }
+  skdos_pid_alive "$pid" || { printf 'Cannot register non-running process: %s\n' "$pid" >&2; return 1; }
+  proc_start="$(skdos_proc_start_time "$pid" || true)"
+  umask 077
+  {
+    printf 'pid=%s\n' "$pid"
+    printf 'proc_start=%s\n' "$proc_start"
+    printf 'app=%s\n' "$app_id"
+    printf 'user=%s\n' "$user"
+    printf 'session=%s\n' "$session"
+    printf 'app_dir=%s\n' "$app_dir"
+    printf 'started=%s\n' "$(date -Is)"
+  } > "$task_file"
 }
 
 skdos_task_unregister() {
@@ -192,11 +350,10 @@ skdos_task_unregister() {
 }
 
 skdos_task_cleanup_dead() {
-  local file pid
+  local file
   for file in "$SKDOS_TASK_DIR"/*.task; do
     [ -e "$file" ] || continue
-    pid="$(awk -F= '$1 == "pid" { print $2; exit }' "$file")"
-    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    if ! skdos_task_process_matches "$file"; then
       rm -f "$file"
     fi
   done
@@ -208,11 +365,11 @@ skdos_task_cleanup_user() {
   skdos_task_cleanup_dead
   for file in "$SKDOS_TASK_DIR"/*.task; do
     [ -e "$file" ] || continue
-    task_user="$(awk -F= '$1 == "user" { print $2; exit }' "$file")"
+    task_user="$(skdos_task_field "$file" user)"
     [ "$task_user" = "$user" ] || continue
-    pid="$(awk -F= '$1 == "pid" { print $2; exit }' "$file")"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
+    pid="$(skdos_task_field "$file" pid)"
+    if skdos_task_process_matches "$file"; then
+      kill -- "$pid" 2>/dev/null || true
     fi
     rm -f "$file"
   done
