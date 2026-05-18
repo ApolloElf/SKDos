@@ -14,9 +14,9 @@ skdos_ensure_layout
 
 while true; do
   clear || true
-  printf '====================\n'
+  printf '=========================\n'
   printf '      SKDos Login\n'
-  printf '====================\n\n'
+  printf '=========================\n\n'
 
   if [ ! -s "$SKDOS_USERS_DB" ]; then
     printf 'No SKDos users exist yet. Creating the first local user.\n'
